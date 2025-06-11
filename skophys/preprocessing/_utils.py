@@ -92,10 +92,45 @@ class Vectorizer(TransformerMixin, BaseEstimator):
     order: str, array order
         "C" or "F"
 
+    pixel_indices: np.ndarray, default None
+        pixel indices to include in the vectorized output. 1D array of int that represents indices of a fully
+        vectorized movie.
+
+    Examples
+    --------
+
+    With pixel_indices::
+
+        movie  # array of shape [t, x, y]
+
+        # make a std image to only include active pixels, exclude background pixels
+        movie_std = movie.std(axis=0)
+
+        # threshold pixel value, ex: determine with fpl ImageWidget vmin
+        threshold = 100
+
+        # get pixel indices where value is above threshold
+        indices_above_thres = np.where(movie_std.ravel() > threshold)[0]
+
+        # make Vectorizer for this movie
+        vectorizer = Vectorizer(pixel_indices=indices_above_thres)
+
+        # make an unvectorizer, provide 2D shape of a movie frame and pixel indices
+        unvectorizer = UnVectorizer(shape=movie[1:], pixel_indices=indices_above_thres)
+
+        # vectorize movie
+        X = vectorizer(movie)
+
+        # unvectorize some computed vector
+        img = unvectorizer(v)
+
+        # can also unvectorize a full movie representation if shape is [n_pixels, time]
+        movie_out = unvectorizer(v_movie)  # output is [time, rows, cols]
+
     """
 
     def __init__(self, pixel_indices: np.ndarray = None, order: str = "C"):
-        self.pixel_indices = None
+        self.pixel_indices = pixel_indices
         self.order = order
 
     def fit(self, movie, y=None):
@@ -142,6 +177,9 @@ class UnVectorizer(TransformerMixin, BaseEstimator):
     ----------
     shape: tuple, [n_rows, n_cols]
         shape of a 2D frame of the movie
+
+    pixel_indices: np.ndarray, default None
+        1D array of indices that map pixel indices in Y to real pixel indices in a "full Y" with all pixels
 
     order: str, array order
         "C" or "F"
