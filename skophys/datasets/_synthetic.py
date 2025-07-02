@@ -1,5 +1,6 @@
-from typing import Literal
 from copy import deepcopy
+from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -41,7 +42,6 @@ class ARProcess:
         ----------
         n_timepoints
         n_components
-        dimensions
         firing_probability
         spikes
         obs_noise_sigma
@@ -59,7 +59,6 @@ class ARProcess:
         self._params = {
             "n_timepoints": n_timepoints,
             "n_components": n_components,
-            "dimensions": dimensions,
             "firing_probability": firing_probability,
             "n_pixels_per_component": n_pixels_per_component,
             "spikes": spikes,
@@ -85,15 +84,15 @@ class ARProcess:
             raise TypeError("`decay_constant` must be a float or a tuple")
 
         a_decay = decay_constant[0]
-        a_rise = 5
+        a_rise = rise_constant
 
         b = 0
-
-        rise_time = 10
 
         n_rise = 0
 
         spikes = list()
+
+        np.random.seed(random_seed)
 
         for i in range(n_components):
             spikes.append((np.random.rand(n_timepoints) < firing_probability).astype(bool))
@@ -122,7 +121,7 @@ class ARProcess:
 
         n_timepoints *= interpolation_factor
 
-        series = list()
+        trace = list()
         labels = list()
 
         for i in range(n_components):
@@ -133,15 +132,17 @@ class ARProcess:
                 _n_pixels_iter = np.random.randint(low=n_pixels_per_component[0], high=n_pixels_per_component[1])
 
             for j in range(_n_pixels_iter):
-                series.append(clean[i] + np.random.normal(scale=obs_noise_sigma, size=n_timepoints))
+                trace.append(clean[i] + np.random.normal(scale=obs_noise_sigma, size=n_timepoints))
                 labels.append(i + 1)
 
         # series = np.vstack(series)
 
         bg_pixels = [np.random.normal(scale=obs_noise_sigma, size=n_timepoints) for i in range(n_background_pixels)]
-        series = np.vstack([*series, *bg_pixels])
-        labels = np.array([*labels, *[0 for i in range(len(bg_pixels))]])
 
+        self._trace = np.vstack([*trace, *bg_pixels])
+        self._labels = np.array([*labels, *[-1 for i in range(len(bg_pixels))]])
+
+        self._spikes = np.vstack(spikes)
 
     @property
     def params(self) -> dict:
@@ -150,24 +151,30 @@ class ARProcess:
     @property
     def spikes(self) -> np.ndarray:
         """spikes ground truth"""
-        pass
+        return self._spikes
 
     @property
     def trace(self) -> np.ndarray:
         """trace ground truth without observation noise"""
-        pass
+        return self._trace
 
     @property
-    def components(self) -> np.ndarray:
+    def labels(self) -> np.ndarray:
         """component labels, -1 indicates a backgound component, shape is [n_pixels]"""
-        pass
+        return self._labels
 
-    def to_hdf5(self):
+    def to_hdf5(self, path: str | Path):
         pass
 
     @classmethod
-    def from_hdf5(cls):
+    def from_hdf5(cls, path: str | Path):
         pass
+
+
+def gaus2d(x=0, y=0, mx=0, my=0, sx=1, sy=1):
+    return 1. / (2. * np.pi * sx * sy) * np.exp(-((x - mx)**2. / (2. * sx**2.) + (y - my)**2. / (2. * sy**2.)))
+
+
 
 
 class ARProcessMovie(ARProcess):
@@ -181,6 +188,12 @@ class ARProcessMovie(ARProcess):
             **kwargs,
     ):
         super().__init__(**kwargs)
+
+        r = -20, 20
+        r = np.linspace(*r)
+        x, y = np.meshgrid(r, r)
+        z = gaus2d(x, y)[20:-20, 20:-20]
+        z /= z.max()
 
     @classmethod
     def from_1d_model(
