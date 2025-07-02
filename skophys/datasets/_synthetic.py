@@ -183,12 +183,27 @@ class ARProcessMovie(ARProcess):
         super().__init__(**kwargs)
 
     @classmethod
-    def from_1d_model(cls):
-        pass
+    def from_1d_model(
+            cls,
+            model: ARProcess,
+            component_shape: Literal["rect", "gaussian"] = "gaussian",
+            movie_dims: tuple[int, int] = (30, 30),
+            component_size: tuple[int, int] = (10, 10),
+            component_locs: np.ndarray[int] | Literal["random"] = "random",
+            component_locs_random_seed: int = 0,
+    ):
+        return cls(
+            component_shape=component_shape,
+            movie_dims=movie_dims,
+            component_size=component_size,
+            component_locs=component_locs,
+            component_locs_random_seed=component_locs_random_seed,
+            **model.params
+        )
 
     def to_hdf5(self):
         pass
 
     @classmethod
-    def from_hdf(cls):
+    def from_hdf5(cls):
         pass
