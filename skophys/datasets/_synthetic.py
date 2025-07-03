@@ -12,8 +12,8 @@ class ARProcess:
         n_components: int,
         firing_probability: float = 0.005,
         n_pixels_per_component: int = 1,
-        obs_noise_sigma: float = 0.0,
-        ar_noise_sigma: float = 0.0,
+        obs_noise_sigma: float = 0.1,
+        ar_noise_sigma: float = 0.1,
         n_background_pixels: int = 0,
         interpolation_factor: int = 1,
         random_seed: int = 0,
@@ -73,13 +73,14 @@ class ARProcess:
         clean = np.zeros((n_components, n_timepoints * interpolation_factor)) + 0.01
 
         if isinstance(decay_constant, float):
-            a_options = [decay_constant]
+            decay_constant = [decay_constant]
         elif isinstance(decay_constant, (tuple, list, np.ndarray)):
-            a_options = decay_constant
+            decay_constant = decay_constant
         else:
             raise TypeError("`decay_constant` must be a float or one of: tuple, list, array")
 
-        a_decay = decay_constant[0]
+        a_options = decay_constant
+        a_decay = a_options[0]
         a_rise = rise_constant
 
         b = 0
@@ -149,14 +150,14 @@ class ARProcess:
                 for i in range(n_background_pixels)
             ]
 
-            self._traces_noisy = np.vstack([*trace, *bg_pixels])
+            self._traces_obs = np.vstack([*trace, *bg_pixels])
             self._labels = np.array([*labels, *[-1 for i in range(len(bg_pixels))]])
         else:
             if (traces_noisy is None) or (labels is None):
                 raise ValueError("must provide `traces_noisey` and `labels` if providing `traces`")
 
             self._traces = traces
-            self._traces_noisy = traces_noisy
+            self._traces_obs = traces_noisy
             self._labels = labels
 
     @property
@@ -174,9 +175,9 @@ class ARProcess:
         return self._traces
 
     @property
-    def traces_noisy(self) -> np.ndarray:
-        """traces with observation noise"""
-        return self._traces_noisy
+    def traces_obs(self) -> np.ndarray:
+        """traces with observation noise, shape is [n_components * n_pixels_per_component, n_timepoints * interpolation_factor]"""
+        return self._traces_obs
 
     @property
     def labels(self) -> np.ndarray:
@@ -188,7 +189,7 @@ class ARProcess:
             path,
             spikes=self.spikes,
             traces=self.traces,
-            traces_noisy=self.traces_noisy,
+            traces_noisy=self.traces_obs,
             labels=self.labels,
             params=self.params,
         )
@@ -225,18 +226,21 @@ class ARProcessMovie(ARProcess):
         z = gaus2d(x, y)[20:-20, 20:-20]
         z /= z.max()
 
-        if component_locs == "random":
-            np.random.seed(component_locs_random_seed)
-            component_locs = (np.random.rand(kwargs["n_components"], 2) * movie_dims[0] - z.shape[0]).clip(0).astype(int)
+        if isinstance(component_locs, str):
+            if component_locs == "random":
+                np.random.seed(component_locs_random_seed)
+                component_locs = (np.random.rand(kwargs["n_components"], 2) * movie_dims[0] - z.shape[0]).clip(0).astype(int)
+            else:
+                raise ValueError("invalid value for `component_locs`")
 
         k = self.params["n_components"]
 
         spatial_footprints = np.zeros((k, *movie_dims))
 
         for i in range(k):
-            xs = slice(component_locs[i, 0], component_locs[i, 0] + 10)
-            ys = slice(component_locs[i, 1], component_locs[i, 1] + 10)
-            spatial_footprints[i, ys, xs] = z
+            cols = slice(component_locs[i, 0], component_locs[i, 0] + 10)
+            rows = slice(component_locs[i, 1], component_locs[i, 1] + 10)
+            spatial_footprints[i, rows, cols] = z
 
         spatial_footprints = spatial_footprints.reshape(k, np.prod(movie_dims))
 
@@ -267,6 +271,7 @@ class ARProcessMovie(ARProcess):
             component_locs_random_seed=component_locs_random_seed,
             **model.params
         )
+
 
     @property
     def movie(self) -> np.ndarray:
