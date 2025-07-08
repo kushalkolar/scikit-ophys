@@ -269,7 +269,7 @@ class ARProcessMovie(ARProcess):
             movie_dims=movie_dims,
             component_size=component_size,
             component_locs=component_locs,
-            component_locs_random_seed=component_locs_random_seed,#NAME?
+            component_locs_random_seed=component_locs_random_seed,
             **model.params
         )
 
