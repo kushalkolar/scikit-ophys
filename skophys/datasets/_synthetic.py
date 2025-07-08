@@ -247,6 +247,7 @@ class ARProcessMovie(ARProcess):
         X = self.traces
 
         self._movie = (spatial_footprints.T @ X).reshape(*movie_dims, X.shape[1]).transpose(-1, 0, 1).copy()
+        self._spatial_footprints = spatial_footprints.reshape(k, *movie_dims)
 
         noise_sigma = kwargs["obs_noise_sigma"]
         noise = np.random.normal(scale=noise_sigma, size=np.prod(self._movie.shape)).reshape(self._movie.shape)
@@ -268,7 +269,7 @@ class ARProcessMovie(ARProcess):
             movie_dims=movie_dims,
             component_size=component_size,
             component_locs=component_locs,
-            component_locs_random_seed=component_locs_random_seed,
+            component_locs_random_seed=component_locs_random_seed,#NAME?
             **model.params
         )
 
@@ -277,6 +278,11 @@ class ARProcessMovie(ARProcess):
     def movie(self) -> np.ndarray:
         """movie, [t, rows, cols]"""
         return self._movie
+
+    @property
+    def spatial(self) -> np.ndarray:
+        """spatial footprints, shape is [k, rows, cols]"""
+        return self._spatial_footprints
 
     def to_hdf5(self):
         pass
