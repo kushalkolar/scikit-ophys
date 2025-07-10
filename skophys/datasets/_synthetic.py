@@ -21,6 +21,7 @@ class ARProcess:
         decay_constant: float | tuple[float] = 0.7,
         # decay_matrix: np.ndarray[float] = None,
         # decay_matrix_jitter_sigma: float = 0.0,
+        baselines: list[float] = None,
         rise_time: int = 10,
         spikes: np.ndarray = None,
         traces: np.ndarray = None,
@@ -99,6 +100,9 @@ class ARProcess:
         else:
             self._spikes = spikes
 
+        if baselines is None:
+            baselines = [0] * n_components
+
         if traces is None:
             for k_i in range(n_components):
                 for t_i in range(2, n_timepoints):
@@ -141,7 +145,7 @@ class ARProcess:
                 for j in range(_n_pixels_iter):
                     trace.append(
                         clean[k_i]
-                        + np.random.normal(scale=obs_noise_sigma, size=n_timepoints)
+                        + np.random.normal(scale=obs_noise_sigma, size=n_timepoints) + baselines[k_i]
                     )
                     labels.append(k_i + 1)
 
@@ -243,8 +247,14 @@ class ARProcessMovie(ARProcess):
             spatial_footprints[i, rows, cols] = z
 
         spatial_footprints = spatial_footprints.reshape(k, np.prod(movie_dims))
+        X = self.traces.copy()
 
-        X = self.traces
+        if "baselines" in kwargs.keys():
+            if kwargs["baselines"] is not None:
+                for k_i in range(k):
+                    spatial_footprints[k_i] *= kwargs["baselines"][k_i]
+                    X[k_i] += kwargs["baselines"][k_i]
+
 
         self._movie = (spatial_footprints.T @ X).reshape(*movie_dims, X.shape[1]).transpose(-1, 0, 1).copy()
         self._spatial_footprints = spatial_footprints.reshape(k, *movie_dims)
