@@ -2,9 +2,8 @@ import numpy as np
 from sklearn.decomposition import randomized_svd
 
 
-def nnsvd(X_init, k, eps: float = 1e-6):
-    """non-negative SVD"""
-    U, S, V = randomized_svd(X_init, n_components=k)
+def nnsvd(A, k, eps: float = 1e-6):
+    U, S, V = randomized_svd(A, n_components=k, n_iter=15)
     W = np.zeros_like(U)
     H = np.zeros_like(V)
 
