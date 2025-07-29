@@ -330,7 +330,7 @@ class NNCCA(BaseSM):
             raise AttributeError("not pre-initialized yet")
         return self._init_arrays
 
-    def pre_initialize(self, data: np.ndarray, max_k: int, method: str = "nnsvd"):
+    def pre_initialize(self, data: np.ndarray, max_k: int, k: int = None, method: str = "nnsvd"):
         """
         Run nnSVD to pre-initialize Y before initializing with gradient descent.
 
@@ -397,11 +397,12 @@ class NNCCA(BaseSM):
 
         self._cov_init = cov / np.linalg.norm(cov, ord="fro")
 
-        print("estimating k")
-        k = estimate_n_components_kmeans(
-            H_nw=np.vstack([past, future]),
-            max_k=max_k,
-        )
+        if k is None:
+            print("estimating k")
+            k = estimate_n_components_kmeans(
+                H_nw=np.vstack([past, future]),
+                max_k=max_k,
+            )
 
         print("performing nnSVD")
         _, Y = nnsvd(A=self.cov_init, k=k)
