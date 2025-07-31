@@ -139,15 +139,35 @@ class NNSM(BaseSM):
         if method != "nnsvd":
             raise ValueError("only nnsvd supported for now")
 
+        Hs = list()
+
+        print("creating H")
+        for i in range(self.n_pixels):
+            Hs.append(
+                scipy.linalg.hankel(
+                    self.X_init[i, : self.lag * self.lag_step * 2], self.X_init[i, (self.lag * self.lag_step * 2) - 1:]
+                )[::self.lag_step]
+            )
+
+        H = np.zeros((self.lag * 2 * self.n_pixels, self.X_init.shape[1] - (self.lag * self.lag_step * 2) + 1))
+        for i, H_i in enumerate(Hs):
+            H[i::self.n_pixels] = H_i
+
+        mu0 = H[: self.lag * self.n_pixels].mean(axis=1)
+
+        H[: self.lag * self.n_pixels] -= mu0[:, None]
+
+        past = H[: self.lag * self.n_pixels]
+
         print("computing covariance")
-        cov = self.X_init.T @ self.X_init
+        cov = past.T @ past
 
         self._cov_init = cov / np.linalg.norm(cov, ord="fro")
 
         if k is None:
             print("estimating k")
             k = estimate_n_components_kmeans(
-                H_nw=self.X_init,
+                H_nw=past,
                 max_k=max_k,
             )
 
@@ -156,7 +176,7 @@ class NNSM(BaseSM):
 
         self._pre_init_arrays = InitArrays(
             Hw=None,
-            P=None,
+            P=past,
             F=None,
             mu_p=None,
             mu_f=None,
