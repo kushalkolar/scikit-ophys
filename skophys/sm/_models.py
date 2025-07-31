@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import scipy
+import jax.numpy as jnp
 from tqdm import tqdm
 
 from ..preprocessing import Vectorizer, UnVectorizer
