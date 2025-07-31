@@ -1,5 +1,21 @@
 import numpy as np
 from sklearn.decomposition import randomized_svd
+import jax
+import jax.numpy as jnp
+
+
+@jax.jit
+def sm_update_step(Y, X, eta):
+    """jax jitted similarity matching update step"""
+    Y_old = Y
+
+    Y_new = Y + eta * Y @ (X - Y.T @ Y)
+
+    Y_new = jnp.clip(Y_new, 0)
+
+    error = jnp.divide(jnp.abs(Y_new - Y_old), jnp.abs(Y_old + 1e-2)).max() / eta
+
+    return Y_new, error
 
 
 def nnsvd(A, k, eps: float = 1e-6):

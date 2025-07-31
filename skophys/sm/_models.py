@@ -5,31 +5,45 @@ import scipy
 from tqdm import tqdm
 
 from ..preprocessing import Vectorizer, UnVectorizer
-from .utils import estimate_n_components_kmeans, nnsvd
+from .utils import estimate_n_components_kmeans, nnsvd, sm_update_step
 
 
 @dataclass
 class InitArrays:
-    Hw: np.ndarray  # whitened vstack([P, F])
+    Hw: np.ndarray    # whitened vstack([P, F])
 
-    P: np.ndarray   # past lag vectors, not whitened
-    F: np.ndarray   # future lag vectors, not whitened
+    P: np.ndarray     # past lag vectors, not whitened
+    F: np.ndarray     # future lag vectors, not whitened
 
     mu_p: np.ndarray  # mean of the past, shape is [n_pixels]
     mu_f: np.ndarray  # mean of the future, shape is [n_pixels]
 
-    Y: np.ndarray   # output, shape is [k, n_timepoints]
+    Y: np.ndarray     # output, shape is [k, n_timepoints]
 
-    W: np.ndarray   # W matrix
+    W: np.ndarray     # W matrix
     W_nw: np.ndarray  # W matrix with non-whitened data projected onto Y
-    M: np.ndarray   # M matrix
+    M: np.ndarray     # M matrix
 
-    k: int                 # number of components
+    k: int            # number of components
     lag: int
     lag_step: int
 
 
 class BaseSM:
+    @property
+    def lag(self) -> int:
+        return self._lag
+
+    @property
+    def lag_step(self) -> int:
+        return self._lag_step
+
+    @property
+    def lag_slices(self) -> list[slice]:
+        if self.n_pixels is None:
+            raise AttributeError("n_pixels is not set yet, must pre-initialize first")
+        return [slice(self.n_pixels * i, (i + 1) * self.n_pixels) for i in range(self.lag * 2)]
+
     @property
     def movie(self) -> np.ndarray:
         if self._movie is None:
@@ -97,8 +111,14 @@ class BaseSM:
 
 class NNSM(BaseSM):
     def __init__(
-            self,
+        self,
+        lag: int,
+        lag_step: int,
     ):
+        self._lag: int = lag
+        self._lag_step: int = lag_step
+        self._lag_slices: list[slice] = None
+
         self._movie: np.ndarray = None
         self._X_init: np.ndarray = None
         self._unvec: UnVectorizer = None
@@ -110,8 +130,9 @@ class NNSM(BaseSM):
         self._pre_init_arrays: InitArrays = None
         self._init_arrays: InitArrays = None
 
-
-    def pre_initialize(self, data: np.ndarray, max_k: int, k: int = None, method: str = "nnsvd"):
+    def pre_initialize(
+        self, data: np.ndarray, max_k: int, k: int = None, method: str = "nnsvd"
+    ):
         """
         Run nnSVD to pre-initialize Y before initializing with gradient descent.
 
@@ -145,13 +166,20 @@ class NNSM(BaseSM):
         for i in range(self.n_pixels):
             Hs.append(
                 scipy.linalg.hankel(
-                    self.X_init[i, : self.lag * self.lag_step * 2], self.X_init[i, (self.lag * self.lag_step * 2) - 1:]
-                )[::self.lag_step]
+                    self.X_init[i, : self.lag * self.lag_step * 2],
+                    self.X_init[i, (self.lag * self.lag_step * 2) - 1 :],
+                )[:: self.lag_step]
             )
 
-        H = np.zeros((self.lag * 2 * self.n_pixels, self.X_init.shape[1] - (self.lag * self.lag_step * 2) + 1))
+        H = np.zeros(
+            (
+                self.lag * 2 * self.n_pixels,
+                self.X_init.shape[1] - (self.lag * self.lag_step * 2) + 1,
+            )
+        )
+
         for i, H_i in enumerate(Hs):
-            H[i::self.n_pixels] = H_i
+            H[i :: self.n_pixels] = H_i
 
         mu0 = H[: self.lag * self.n_pixels].mean(axis=1)
 
@@ -178,7 +206,7 @@ class NNSM(BaseSM):
             Hw=None,
             P=past,
             F=None,
-            mu_p=None,
+            mu_p=mu0,
             mu_f=None,
             Y=Y,
             k=k,
@@ -190,11 +218,11 @@ class NNSM(BaseSM):
         )
 
     def initialize(
-            self,
-            max_iter: int = 2_000,
-            eta: float = 0.1,
-            error_threshold: float = 1e-3,
-            keep_iteration_results: bool = False,
+        self,
+        max_iter: int = 2_000,
+        eta: float = 0.1,
+        error_threshold: float = 1e-3,
+        keep_iteration_results: bool = False,
     ):
         if self._pre_init_arrays is None:
             raise AttributeError("Must pre-initialize first")
@@ -209,36 +237,25 @@ class NNSM(BaseSM):
         Ws = list()
 
         for iteration in tqdm(range(max_iter)):
-            if keep_iteration_results:
-                Ys.append(Y)
-                Ws.append(Y @ self.cov_init.T)
+            Y, err = sm_update_step(
+                jnp.array(Y),
+                jnp.array(self.cov_init),
+                jnp.array(eta, dtype=jnp.float32),
+            )
 
-            # if iteration > 500:
-            #     eta = 1.0
-            # if iteration > 1_000:
-            #     eta = 0.5
+            error_log.append(float(err))
 
-            Y_old = Y
-            Y = Y + eta * Y @ (self.cov_init - Y.T @ Y)
-
-            # zeroed = Y.sum(axis=1) == 0.0
-            # Y[zeroed] = (np.random.randn(zeroed.sum(), T) / np.sqrt(T)).clip(0)
-
-            Y = Y.clip(0)
-
-            er = np.divide(np.abs(Y - Y_old), np.abs(Y_old + 1e-2)).max() / eta
-            error_log.append(er)
-            if er < error_threshold:
+            if error_log[-1] < error_threshold:
                 break
 
-        W = Y @ self.X_init.T  # / sum_y_squared
+        W = Y @ self._pre_init_arrays.P.T  # / sum_y_squared
         M = Y @ Y.T  # / sum_y_squared
 
         self._init_arrays = InitArrays(
             Hw=None,
             P=None,
             F=None,
-            mu_p=None,
+            mu_p=self._pre_init_arrays.mu_p,
             mu_f=None,
             Y=Y,
             k=self._pre_init_arrays.k,
@@ -263,7 +280,6 @@ class NNSM(BaseSM):
 
         """
         pass
-
 
 
 class NNCCA(BaseSM):
@@ -392,6 +408,7 @@ class NNCCA(BaseSM):
             )
 
         H = np.zeros((self.lag * 2 * self.n_pixels, self.X_init.shape[1] - (self.lag * self.lag_step * 2) + 1))
+
         for i, H_i in enumerate(Hs):
             H[i::self.n_pixels] = H_i
 
@@ -461,30 +478,19 @@ class NNCCA(BaseSM):
         Ys = list()
         Ws = list()
 
+        ferror_log = []
+
         for iteration in tqdm(range(max_iter)):
-            if keep_iteration_results:
-                Ys.append(Y)
-                Ws.append(Y @ self.cov_init.T)
+            Y, err = sm_update_step(jnp.array(Y), jnp.array(self.cov_init), jnp.array(eta, dtype=jnp.float32))
 
-            # if iteration > 500:
-            #     eta = 1.0
-            # if iteration > 1_000:
-            #     eta = 0.5
+            error_log.append(float(err))
 
-            Y_old = Y
-            Y = Y + eta * Y @ (self.cov_init - Y.T @ Y)
-
-            # zeroed = Y.sum(axis=1) == 0.0
-            # Y[zeroed] = (np.random.randn(zeroed.sum(), T) / np.sqrt(T)).clip(0)
-
-            Y = Y.clip(0)
-
-            er = np.divide(np.abs(Y - Y_old), np.abs(Y_old + 1e-2)).max() / eta
-            error_log.append(er)
-            if er < error_threshold:
+            if error_log[-1] < error_threshold:
                 break
 
         H_nw = np.vstack([self._pre_init_arrays.P, self._pre_init_arrays.F])
+
+        Y = np.array(Y)
 
         W = Y @ self._pre_init_arrays.Hw.T  # / sum_y_squared
         W_nw = Y @ H_nw.T  # / sum_y_squared
