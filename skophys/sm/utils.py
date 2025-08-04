@@ -107,3 +107,42 @@ def estimate_n_components_kmeans(
     n_components = (labels == 0).sum() + 1
 
     return n_components
+
+
+def eigen_decomposition(M):
+    # output eigenvalues and eigenvectors sorted by eigenvalues
+
+    eigenvalues, eigenvectors = np.linalg.eig(M)
+    eigenvalues = np.real(eigenvalues)
+    eigenvectors = np.real(eigenvectors)
+
+    sorted_indices = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[sorted_indices]
+    eigenvectors = eigenvectors[:, sorted_indices]
+
+    return eigenvalues, eigenvectors
+
+
+def truncated_whitening(X, X_mc, k):
+    # we assume X has a shape (N,T)
+    # N = number of features
+    # T = number of samples
+
+    cov = (X_mc.T @ X_mc)
+    cov = cov / np.linalg.norm(cov, ord="fro")
+    S, U = eigen_decomposition(cov)
+
+    S_eco = S[:]
+    U_eco = U[:, :]
+
+    # Epsilon is added to the eigenvalues to prevent division by zero
+    epsilon = 1e-5
+    inv_sqrt_S = np.diag(1.0 / np.sqrt(S_eco + epsilon))
+
+    # whitening matrix W shape (N, N)
+    W = U_eco @ inv_sqrt_S @ U_eco.T
+
+    # whitened data shape (N, T)
+    Xw = W @ X.T
+
+    return Xw, cov

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from tqdm import tqdm
 
 from ..preprocessing import Vectorizer, UnVectorizer
-from .utils import estimate_n_components_kmeans, nnsvd, sm_update_step
+from .utils import estimate_n_components_kmeans, nnsvd, sm_update_step, truncated_whitening
 
 
 @dataclass
@@ -182,30 +182,34 @@ class NNSM(BaseSM):
         for i, H_i in enumerate(Hs):
             H[i :: self.n_pixels] = H_i
 
+        past = H[: self.lag * self.n_pixels].copy()
+
         mu0 = H[: self.lag * self.n_pixels].mean(axis=1)
 
         H[: self.lag * self.n_pixels] -= mu0[:, None]
 
-        past = H[: self.lag * self.n_pixels]
+        past_mc = H[: self.lag * self.n_pixels].copy()
 
         print("computing covariance")
-        cov = past.T @ past
+        # cov = past.T @ past
 
-        self._cov_init = cov / np.linalg.norm(cov, ord="fro")
+        # self._cov_init = cov / np.linalg.norm(cov, ord="fro")
 
         if k is None:
             print("estimating k")
             k = estimate_n_components_kmeans(
-                H_nw=past,
+                H_nw=past_mc,
                 max_k=max_k,
             )
+
+        past_w, self._cov_init = truncated_whitening(past, past_mc, k=k)
 
         print("performing nnSVD")
         _, Y = nnsvd(A=self.cov_init, k=k)
 
         self._pre_init_arrays = InitArrays(
             Hw=None,
-            P=past,
+            P=past_mc,
             F=None,
             mu_p=mu0,
             mu_f=None,
