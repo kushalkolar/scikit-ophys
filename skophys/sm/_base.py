@@ -1,6 +1,10 @@
 import numpy as np
-from skophys.preprocessing import UnVectorizer
-from skophys.sm.utils import InitArrays
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+from ..preprocessing import UnVectorizer
+from .utils import InitArrays, get_permute_indices
+from ..datasets import ARProcess
 
 
 class BaseSM:
@@ -79,5 +83,28 @@ class BaseSM:
     ):
         raise NotImplementedError
 
-    def fit_timepoint(self, x_t: np.ndarray):
-        raise NotImplementedError
+    def permute_indices(self, ground_truth: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        permute indices of Y, W, M, to match ground truth from AR model
+
+        Returns
+        -------
+        permutation_indices, cosine_similarity matrix
+
+        """
+        cos_sim = cosine_similarity(
+            ground_truth, self.init_arrays.Y
+        )
+
+        ixs_permute = get_permute_indices(cos_sim)
+        cos_sim = cos_sim[:, ixs_permute]
+
+        self.init_arrays.Y = self.init_arrays.Y[ixs_permute]
+
+        W = self.init_arrays.Y @ self._pre_init_arrays.Pw.T
+        M = self.init_arrays.Y @ self.init_arrays.Y.T
+
+        self.init_arrays.W = W
+        self.init_arrays.M = M
+
+        return ixs_permute, cos_sim

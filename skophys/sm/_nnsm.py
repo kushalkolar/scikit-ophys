@@ -1,10 +1,13 @@
+from tqdm import tqdm
 import numpy as np
 import scipy
 from jax import numpy as jnp
+from qpsolvers import solve_qp
+
+
 from ..preprocessing import UnVectorizer, Vectorizer
 from ._base import BaseSM
 from .utils import InitArrays, estimate_n_components_kmeans, truncated_whitening, nnsvd, sm_update_step
-from tqdm import tqdm
 
 
 class NNSM(BaseSM):
@@ -110,7 +113,9 @@ class NNSM(BaseSM):
                 max_k=max_k,
             )
 
-        past_w = truncated_whitening(past, past_mc, k=k + k_add_trunc_w)
+        print("truncated whitening")
+
+        past_w, Z = truncated_whitening(past, past_mc, k=k + k_add_trunc_w)
 
         self._cov_init = (past_w.T @ past_w) / past_w.shape[1]
 
@@ -127,6 +132,7 @@ class NNSM(BaseSM):
             Fw=None,
             mu_p=mu0,
             mu_f=None,
+            Z=Z,
             Y=Y,
             k=k,
             lag=None,
@@ -140,7 +146,8 @@ class NNSM(BaseSM):
         self,
         max_iter: int = 2_000,
         eta: float = 0.1,
-        error_threshold: float = 1e-3,
+        error_threshold: float = 1e-2,
+        inertia: float = 1e-3,
         keep_iteration_results: bool = False,
     ):
         if self._pre_init_arrays is None:
@@ -164,10 +171,16 @@ class NNSM(BaseSM):
 
             error_log.append(float(err))
 
-            if error_log[-1] < error_threshold:
-                break
+            # below inertia threshold, error is decreasing and below error threshold
+            if iteration > 2:
+                if (error_log[-2] - error_log[-1]) < inertia and (
+                    error_log[-1] < error_log[-2]
+                ) and (error_log[-1] < error_threshold):
+                    break
 
-        W = Y @ self._pre_init_arrays.P.T  # / sum_y_squared
+        Y = np.array(Y)
+
+        W = Y @ self._pre_init_arrays.Pw.T  # / sum_y_squared
         M = Y @ Y.T  # / sum_y_squared
 
         self._init_arrays = InitArrays(
@@ -189,15 +202,29 @@ class NNSM(BaseSM):
 
         return error_log, Ys, Ws
 
-    def fit_timepoint(self, x_t: np.ndarray):
+    def fit_timepoint(self, x_t: np.ndarray) -> np.ndarray:
         """
 
         Parameters
         ----------
-        x_t: vector of shape [n_pixels]
+        x_t: vector of shape [n_pixels], non-whitened, non-centered
 
         Returns
         -------
+        y_t: vector of shape [k, ]
 
         """
-        pass
+
+        if x_t.ndim > 1:
+            x_t = x_t.ravel()
+
+        # whiten
+        x_t = self.pre_init_arrays.Z @ x_t
+
+        x_t = x_t.astype(np.float64)
+
+        Wt = self.init_arrays.W.astype(np.float64)
+        Mt = self.init_arrays.M.astype(np.float64)
+        k = self.init_arrays.k
+
+        return solve_qp((Mt + Mt.T) / 2, -Wt @ x_t, lb=np.zeros(k), solver="cvxopt")

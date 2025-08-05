@@ -1,10 +1,12 @@
 import numpy as np
 import scipy
 from jax import numpy as jnp
+from qpsolvers import solve_qp
+from tqdm import tqdm
+
 from ..preprocessing import UnVectorizer, Vectorizer
 from ._base import BaseSM
-from .utils import InitArrays, estimate_n_components_kmeans, nnsvd, sm_update_step
-from tqdm import tqdm
+from .utils import InitArrays, estimate_n_components_kmeans, nnsvd, sm_update_step, truncated_whitening
 
 
 class NNCCA(BaseSM):
@@ -137,30 +139,18 @@ class NNCCA(BaseSM):
         for i, H_i in enumerate(Hs):
             H[i::self.n_pixels] = H_i
 
+        past = H[: self.lag * self.n_pixels].copy()
+        future = H[self.lag * self.n_pixels :].copy()
+
         mu0 = H[: self.lag * self.n_pixels].mean(axis=1)
         mu1 = H[self.lag * self.n_pixels :].mean(axis=1)
 
         H[: self.lag * self.n_pixels] -= mu0[:, None]
         H[self.lag * self.n_pixels :] -= mu1[:, None]
 
-        past = H[: self.lag * self.n_pixels]
-        future = H[self.lag * self.n_pixels :]
+        past_mc = H[: self.lag * self.n_pixels].copy()
+        future_mc = H[self.lag * self.n_pixels :].copy()
 
-        print("Whitening H")
-
-
-
-        Hw = np.vstack(
-            [
-                scipy.linalg.pinv(scipy.linalg.sqrtm(past @ past.T / past.shape[1])) @ past,
-                scipy.linalg.pinv(scipy.linalg.sqrtm(future @ future.T / future.shape[1])) @ future,
-            ]
-        )
-
-        print("computing covariance")
-        cov = Hw.T @ Hw
-
-        self._cov_init = cov / np.linalg.norm(cov, ord="fro")
 
         if k is None:
             print("estimating k")
@@ -169,6 +159,30 @@ class NNCCA(BaseSM):
                 max_k=max_k,
             )
 
+        print("Whitening H")
+
+        # past_w = truncated_whitening(past, past_mc, k=k + k_add_trunc_w)
+        # future_w = truncated_whitening(future, future_mc, k=k + k_add_trunc_w)
+        #
+        # Hw = np.vstack([past_w, future_w])
+
+        Zp = scipy.linalg.pinv(scipy.linalg.sqrtm(past_mc @ past_mc.T / past_mc.shape[1]))
+        Zf = scipy.linalg.pinv(scipy.linalg.sqrtm(future_mc @ future_mc.T / future_mc.shape[1]))
+
+        Hw = np.vstack(
+            [
+                Zp @ past_mc,
+                Zf @ future_mc,
+            ]
+        )
+
+        print("computing covariance")
+        self._cov_init = (Hw.T @ Hw) / Hw.shape[1]
+        # cov = Hw.T @ Hw
+        #
+        # self._cov_init = cov / np.linalg.norm(cov, ord="fro")
+
+
         print("performing nnSVD")
         _, Y = nnsvd(A=self.cov_init, k=k)
 
@@ -176,6 +190,10 @@ class NNCCA(BaseSM):
             Hw=Hw,
             P=past,
             F=future,
+            # Pw=past_w,
+            # Fw=future_w,
+            Zp=Zp,
+            Zf=Zf,
             mu_p=mu0,
             mu_f=mu1,
             Y=Y,
@@ -188,11 +206,12 @@ class NNCCA(BaseSM):
         )
 
     def initialize(
-            self,
-            max_iter: int = 2_000,
-            eta: float = 0.1,
-            error_threshold: float = 1e-3,
-            keep_iteration_results: bool = False,
+        self,
+        max_iter: int = 2_000,
+        eta: float = 0.1,
+        error_threshold: float = 1e-2,
+        inertia: float = 1e-3,
+        keep_iteration_results: bool = False,
     ):
         if self._pre_init_arrays is None:
             raise AttributeError("Must pre-initialize first")
@@ -211,8 +230,14 @@ class NNCCA(BaseSM):
 
             error_log.append(float(err))
 
-            if error_log[-1] < error_threshold:
-                break
+            # below inertia threshold, error is decreasing and below error threshold
+            if iteration > 2:
+                if (
+                    (error_log[-2] - error_log[-1]) < inertia
+                    and (error_log[-1] < error_log[-2])
+                    and (error_log[-1] < error_threshold)
+                ):
+                    break
 
         H_nw = np.vstack([self._pre_init_arrays.P, self._pre_init_arrays.F])
 
@@ -239,15 +264,29 @@ class NNCCA(BaseSM):
 
         return error_log, Ys, Ws
 
-    def fit_timepoint(self, x_t: np.ndarray):
-        """
-
-        Parameters
-        ----------
-        x_t: vector of shape [n_pixels]
-
-        Returns
-        -------
-
-        """
-        pass
+    # def fit_timepoint(self, x_t: np.ndarray) -> np.ndarray:
+    #     """
+    #
+    #     Parameters
+    #     ----------
+    #     x_t: vector of shape [n_pixels], non-whitened, non-centered
+    #
+    #     Returns
+    #     -------
+    #     y_t: vector of shape [k, ]
+    #
+    #     """
+    #
+    #     if x_t.ndim > 1:
+    #         x_t = x_t.ravel()
+    #
+    #     # whiten
+    #     x_t = self.pre_init_arrays.Z @ x_t
+    #
+    #     x_t = x_t.astype(np.float64)
+    #
+    #     Wt = self.init_arrays.W.astype(np.float64)
+    #     Mt = self.init_arrays.M.astype(np.float64)
+    #     k = self.init_arrays.k
+    #
+    #     return solve_qp((Mt + Mt.T) / 2, -Wt @ x_t, lb=np.zeros(k), solver="cvxopt")

@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 
+from tqdm import tqdm
 import numpy as np
+from scipy.sparse.linalg import svds
+from scipy.optimize import linear_sum_assignment
 from sklearn.decomposition import randomized_svd
 import jax
 import jax.numpy as jnp
@@ -15,6 +18,11 @@ class InitArrays:
 
     Pw: np.ndarray  = None # past lag vectors, whitened
     Fw: np.ndarray  = None # future lag vectors, whitened
+
+    Z: np.ndarray = None   # whitening matrix
+
+    Zp: np.ndarray = None  # whitening matrix for past
+    Zf: np.ndarray = None  # whitening matrix for future
 
     mu_p: np.ndarray  = None # mean of the past, shape is [n_pixels]
     mu_f: np.ndarray  = None # mean of the future, shape is [n_pixels]
@@ -104,7 +112,12 @@ def estimate_n_components_kmeans(
 
     """
 
-    _, s_vals, _ = np.linalg.svd(H_nw)
+    # _, s_vals, _ = np.linalg.svd(H_nw)
+
+    print("running svd to estimate k")
+    _, s_vals, _ = svds(H_nw, k=max_k + 10)
+
+    s_vals = s_vals[::-1]  # svds returns in reverse order
 
     s_vals = np.log(s_vals[1:max_k + 1] / s_vals.max())
 
@@ -138,7 +151,7 @@ def estimate_n_components_kmeans(
 def eigen_decomposition(M):
     # output eigenvalues and eigenvectors sorted by eigenvalues
 
-    eigenvalues, eigenvectors = np.linalg.eig(M)
+    eigenvalues, eigenvectors = np.linalg.eigh(M)
     eigenvalues = np.real(eigenvalues)
     eigenvectors = np.real(eigenvectors)
 
@@ -149,7 +162,7 @@ def eigen_decomposition(M):
     return eigenvalues, eigenvectors
 
 
-def truncated_whitening(X, X_mc, k) -> np.ndarray:
+def truncated_whitening(X, X_mc, k) -> tuple[np.ndarray, np.ndarray]:
     # we assume X has a shape (N,T)
     # N = number of features
     # T = number of samples
@@ -171,4 +184,11 @@ def truncated_whitening(X, X_mc, k) -> np.ndarray:
     # whitened data shape (N, T)
     Xw = W @ X
 
-    return Xw
+    return Xw, W
+
+
+def get_permute_indices(A):
+    # Convert maximization to minimization by negating the matrix
+    cost_matrix = -A
+    row_indices, col_indices = linear_sum_assignment(cost_matrix)
+    return col_indices
