@@ -11,7 +11,8 @@ import jax.numpy as jnp
 
 @dataclass
 class InitArrays:
-    Hw: np.ndarray = None    # whitened vstack([P, F])
+    Hw: np.ndarray = None    # whitened vstack([P, F]), mean centered P and F
+    H: np.ndarray = None    # non-whitened vstack([P, F]), mean centered P and F
 
     P: np.ndarray  = None # past lag vectors centered, not whitened
     F: np.ndarray  = None # future lag vectors centered, not whitened

@@ -101,7 +101,12 @@ class BaseSM:
 
         self.init_arrays.Y = self.init_arrays.Y[ixs_permute]
 
-        W = self.init_arrays.Y @ self._pre_init_arrays.Pw.T
+        if self.pre_init_arrays.Pw is None:
+            P = self.pre_init_arrays.P
+        else:
+            P = self.pre_init_arrays.Pw
+
+        W = self.init_arrays.Y @ P.T
         M = self.init_arrays.Y @ self.init_arrays.Y.T
 
         self.init_arrays.W = W

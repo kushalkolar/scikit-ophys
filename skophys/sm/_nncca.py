@@ -188,6 +188,7 @@ class NNCCA(BaseSM):
 
         self._pre_init_arrays = InitArrays(
             Hw=Hw,
+            H=np.vstack([past_mc, future_mc]),
             P=past,
             F=future,
             # Pw=past_w,
