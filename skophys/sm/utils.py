@@ -1,7 +1,33 @@
+from dataclasses import dataclass
+
 import numpy as np
 from sklearn.decomposition import randomized_svd
 import jax
 import jax.numpy as jnp
+
+
+@dataclass
+class InitArrays:
+    Hw: np.ndarray = None    # whitened vstack([P, F])
+
+    P: np.ndarray  = None # past lag vectors centered, not whitened
+    F: np.ndarray  = None # future lag vectors centered, not whitened
+
+    Pw: np.ndarray  = None # past lag vectors, whitened
+    Fw: np.ndarray  = None # future lag vectors, whitened
+
+    mu_p: np.ndarray  = None # mean of the past, shape is [n_pixels]
+    mu_f: np.ndarray  = None # mean of the future, shape is [n_pixels]
+
+    Y: np.ndarray  = None    # output, shape is [k, n_timepoints]
+
+    W: np.ndarray  = None     # W matrix
+    W_nw: np.ndarray  = None # W matrix with non-whitened data projected onto Y
+    M: np.ndarray  = None    # M matrix
+
+    k: int  = None           # number of components
+    lag: int  = None
+    lag_step: int = None
 
 
 @jax.jit
@@ -123,17 +149,17 @@ def eigen_decomposition(M):
     return eigenvalues, eigenvectors
 
 
-def truncated_whitening(X, X_mc, k):
+def truncated_whitening(X, X_mc, k) -> np.ndarray:
     # we assume X has a shape (N,T)
     # N = number of features
     # T = number of samples
 
-    cov = (X_mc.T @ X_mc)
-    cov = cov / np.linalg.norm(cov, ord="fro")
+    cov = (X_mc @ X_mc.T)
+    cov = cov / X_mc.shape[1] #np.linalg.norm(cov, ord="fro")
     S, U = eigen_decomposition(cov)
 
-    S_eco = S[:]
-    U_eco = U[:, :]
+    S_eco = S[:k]
+    U_eco = U[:, :k]
 
     # Epsilon is added to the eigenvalues to prevent division by zero
     epsilon = 1e-5
@@ -143,6 +169,6 @@ def truncated_whitening(X, X_mc, k):
     W = U_eco @ inv_sqrt_S @ U_eco.T
 
     # whitened data shape (N, T)
-    Xw = W @ X.T
+    Xw = W @ X
 
-    return Xw, cov
+    return Xw

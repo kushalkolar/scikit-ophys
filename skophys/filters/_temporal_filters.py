@@ -2,8 +2,7 @@ import numpy as np
 import numba
 
 from sklearn.base import BaseEstimator, TransformerMixin
-from ._utils import Vectorizer, UnVectorizer
-
+from ..preprocessing import Vectorizer
 
 
 @numba.guvectorize([(numba.float32[:], numba.int32, numba.int32, numba.float32[:])], "(n), (), () -> (n)")

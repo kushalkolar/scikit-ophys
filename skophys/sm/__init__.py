@@ -1,1 +1,2 @@
-from ._models import NNCCA, NNSM
+from ._nncca import NNCCA
+from ._nnsm import NNSM
