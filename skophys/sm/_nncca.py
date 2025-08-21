@@ -93,7 +93,16 @@ class NNCCA(BaseSM):
             raise AttributeError("not pre-initialized yet")
         return self._init_arrays
 
-    def pre_initialize(self, data: np.ndarray, max_k: int, k: int = None, k_add_trunc_w: int = 0, method: str = "nnsvd"):
+    def pre_initialize(
+        self,
+        data: np.ndarray,
+        max_k: int,
+        k: int = None,
+        k_add_trunc_w: int = 0,
+        method: str = "nnsvd",
+        whiten_method: str = "half",
+        print_progress: bool = True,
+    ):
         """
         Run nnSVD to pre-initialize Y before initializing with gradient descent.
 
@@ -121,20 +130,18 @@ class NNCCA(BaseSM):
 
         self._n_pixels = self._X_init.shape[0]
 
-        if method != "nnsvd":
-            raise ValueError("only nnsvd supported for now")
-
         Hs = list()
 
-        print("creating H")
+        if print_progress:
+            print("creating H")
         for i in range(self.n_pixels):
             Hs.append(
                 scipy.linalg.hankel(
-                    self.X_init[i, : self.lag * self.lag_step * 2], self.X_init[i, (self.lag * self.lag_step * 2) - 1 :]
+                    self.X_init[i, : self.lag * self.lag_step * 2], self.X_init[i, (self.lag * self.lag_step * 2) :]
                 )[::self.lag_step]
             )
 
-        H = np.zeros((self.lag * 2 * self.n_pixels, self.X_init.shape[1] - (self.lag * self.lag_step * 2) + 1))
+        H = np.zeros((self.lag * 2 * self.n_pixels, self.X_init.shape[1] - (self.lag * self.lag_step * 2)))
 
         for i, H_i in enumerate(Hs):
             H[i::self.n_pixels] = H_i
@@ -153,38 +160,65 @@ class NNCCA(BaseSM):
 
 
         if k is None:
-            print("estimating k")
+            if print_progress:
+                print("estimating k")
             k = estimate_n_components_kmeans(
                 H_nw=np.vstack([past, future]),
                 max_k=max_k,
             )
+        if print_progress:
+            print("Whitening H")
 
-        print("Whitening H")
+        if whiten_method == "half-trunc":
+            past_w, Zp = truncated_whitening(past, past_mc, k=k + k_add_trunc_w)
+            future_w, Zf = truncated_whitening(future, future_mc, k=k + k_add_trunc_w)
 
-        # past_w = truncated_whitening(past, past_mc, k=k + k_add_trunc_w)
-        # future_w = truncated_whitening(future, future_mc, k=k + k_add_trunc_w)
-        #
-        # Hw = np.vstack([past_w, future_w])
+            Hw = np.vstack([past_w, future_w])
 
-        Zp = scipy.linalg.pinv(scipy.linalg.sqrtm(past_mc @ past_mc.T / past_mc.shape[1]))
-        Zf = scipy.linalg.pinv(scipy.linalg.sqrtm(future_mc @ future_mc.T / future_mc.shape[1]))
+        elif whiten_method == "half":
+            Zp = scipy.linalg.pinv(scipy.linalg.sqrtm(past_mc @ past_mc.T / past_mc.shape[1]))
+            Zf = scipy.linalg.pinv(scipy.linalg.sqrtm(future_mc @ future_mc.T / future_mc.shape[1]))
 
-        Hw = np.vstack(
-            [
-                Zp @ past_mc,
-                Zf @ future_mc,
-            ]
-        )
+            Hw = np.vstack(
+                [
+                    Zp @ past,
+                    Zf @ future,
+                ]
+            )
 
-        print("computing covariance")
+        elif whiten_method == "full":
+            past_w, Zp = truncated_whitening(past_mc, past_mc, k=k + k_add_trunc_w)
+            future_w, Zf = truncated_whitening(future_mc, future_mc, k=k + k_add_trunc_w)
+
+            Hw = np.vstack([past_w, future_w])
+            # Zp = scipy.linalg.pinv(scipy.linalg.sqrtm(past_mc @ past_mc.T / past_mc.shape[1]))
+            # Zf = scipy.linalg.pinv(scipy.linalg.sqrtm(future_mc @ future_mc.T / future_mc.shape[1]))
+            #
+            # Hw = np.vstack(
+            #     [
+            #         Zp @ past_mc,
+            #         Zf @ future_mc,
+            #     ]
+            # )
+        else:
+            raise ValueError("invalid whiten method")
+
+        if print_progress:
+            print("computing covariance")
         self._cov_init = (Hw.T @ Hw) / Hw.shape[1]
         # cov = Hw.T @ Hw
         #
         # self._cov_init = cov / np.linalg.norm(cov, ord="fro")
 
 
-        print("performing nnSVD")
-        _, Y = nnsvd(A=self.cov_init, k=k)
+        if method == "nnsvd":
+            if print_progress:
+                print("performing nnSVD")
+            _, Y = nnsvd(A=self.cov_init, k=k)
+        elif method == "white-noise":
+            Y = np.random.normal(loc=0, scale=self.cov_init.std(), size=(k * Hw.shape[1])).reshape(k, Hw.shape[1])
+        else:
+            raise ValueError("method must be 'nnsvd' or 'white-noise'")
 
         self._pre_init_arrays = InitArrays(
             Hw=Hw,
@@ -193,8 +227,8 @@ class NNCCA(BaseSM):
             F=future,
             # Pw=past_w,
             # Fw=future_w,
-            Zp=Zp,
-            Zf=Zf,
+            # Zp=Zp,
+            # Zf=Zf,
             mu_p=mu0,
             mu_f=mu1,
             Y=Y,
@@ -213,6 +247,7 @@ class NNCCA(BaseSM):
         error_threshold: float = 1e-2,
         inertia: float = 1e-3,
         keep_iteration_results: bool = False,
+        progress_bar: bool = True,
     ):
         if self._pre_init_arrays is None:
             raise AttributeError("Must pre-initialize first")
@@ -226,8 +261,12 @@ class NNCCA(BaseSM):
         Ys = list()
         Ws = list()
 
-        for iteration in tqdm(range(max_iter)):
-            Y, err = sm_update_step(jnp.array(Y), jnp.array(self.cov_init), jnp.array(eta, dtype=jnp.float32))
+        Y = jnp.array(Y)
+        cov_init = jnp.array(self.cov_init)
+        eta = jnp.array(eta, dtype=jnp.float32)
+
+        for iteration in tqdm(range(max_iter), disable=not progress_bar):
+            Y, err = sm_update_step(Y, cov_init, eta)
 
             error_log.append(float(err))
 

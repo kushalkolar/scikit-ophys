@@ -8,6 +8,9 @@ from sklearn.decomposition import randomized_svd
 import jax
 import jax.numpy as jnp
 
+# import cupy
+# from cupyx.scipy.sparse.linalg import svds
+
 
 @dataclass
 class InitArrays:
@@ -164,25 +167,21 @@ def eigen_decomposition(M):
 
 
 def truncated_whitening(X, X_mc, k) -> tuple[np.ndarray, np.ndarray]:
-    # we assume X has a shape (N,T)
-    # N = number of features
-    # T = number of samples
-
     cov = (X_mc @ X_mc.T)
-    cov = cov / X_mc.shape[1] #np.linalg.norm(cov, ord="fro")
+    cov = cov / X_mc.shape[1]
     S, U = eigen_decomposition(cov)
 
-    S_eco = S[:k]
-    U_eco = U[:, :k]
+    D = S[:k]
+    P = U[:, :k]
 
     # Epsilon is added to the eigenvalues to prevent division by zero
     epsilon = 1e-5
-    inv_sqrt_S = np.diag(1.0 / np.sqrt(S_eco + epsilon))
+    inv_sqrt_S = np.diag(1.0 / np.sqrt(D + epsilon))
 
-    # whitening matrix W shape (N, N)
-    W = U_eco @ inv_sqrt_S @ U_eco.T
+    # whitening matrix W
+    W = P @ inv_sqrt_S @ P.T
 
-    # whitened data shape (N, T)
+    # whitened data
     Xw = W @ X
 
     return Xw, W

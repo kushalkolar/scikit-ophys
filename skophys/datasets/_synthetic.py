@@ -220,6 +220,7 @@ class ARProcessMovie(ARProcess):
             component_size: tuple[int, int] = (10, 10),
             component_locs: np.ndarray[int] | Literal["random"] = "random",
             component_locs_random_seed: int = 0,
+            spatial_noise_type: str | None = "add",
             **kwargs,
     ):
         super().__init__(**kwargs)
@@ -262,7 +263,16 @@ class ARProcessMovie(ARProcess):
         noise_sigma = kwargs["obs_noise_sigma"]
         noise = np.random.normal(scale=noise_sigma, size=np.prod(self._movie.shape)).reshape(self._movie.shape)
 
-        self._movie += noise
+        if spatial_noise_type is None:
+            self._noise = noise
+        elif spatial_noise_type == "add":
+            self._noise = (self.spatial.mean(axis=0) + noise)
+        elif spatial_noise_type == "mult":
+            self._noise = (self.spatial.mean(axis=0) * noise)
+        else:
+            raise ValueError("spatial_noise_type must be 'add' or 'mult'")
+
+        self._movie += self.noise
 
     @classmethod
     def from_1d_model(
@@ -293,6 +303,10 @@ class ARProcessMovie(ARProcess):
     def spatial(self) -> np.ndarray:
         """spatial footprints, shape is [k, rows, cols]"""
         return self._spatial_footprints
+
+    @property
+    def noise(self) -> np.ndarray:
+        return self._noise
 
     def to_hdf5(self):
         pass
